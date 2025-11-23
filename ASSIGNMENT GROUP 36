@@ -1,0 +1,443 @@
+GROUP 36 ASSIGNMENT
+
+INTE/MG/1730/09/22 WAMBUA.M.NZONZO
+INTE/MG/1902/09/22 SALIM ANWAR
+INTE/MG/2920/09/22 JEFFREY OWEN 
+
+GITHUB LINK:
+
+
+
+Part A — Metric Analysis 
+
+I computed metrics from the provided source. Where exact automated tools weren’t available here, I used straightforward, explainable counting rules (Cyclomatic Complexity = 1 + number of decision points in the method; LOC = non-empty, non-comment lines within the scope; DIT = inheritance depth; CBO = count of other classes referenced/used by a class; LCOM = rough cohesion indicator based on how many methods share instance fields). I list the important, load-bearing metrics and highlight problem areas.
+
+File-level statistics (approx):
+
+Total lines of code (LOC, non-empty, non-comment): ~200 (the script as provided).
+
+Total classes: 6 (Person, Student, Course, Lecturer, Registrar, plus module-level main function).
+
+Total methods (instance methods / functions): ~20
+
+Cyclomatic Complexity (CC) — per method (estimates)
+
+(Using CC = 1 + number of decision/branch points in the method)
+
+Person.__init__ — CC = 1
+
+Person.display_info — 1
+
+Person.update_contact — 1
+
+Student.__init__ — 1
+
+Student.register_course — CC = 2 (one if branch)
+
+Student.calculate_performance — CC ≈ 10 (grade if/elif chain, loops, attendance calculations, and performance outcome if/elif) ← High (problem area)
+
+Course.__init__ — 1
+
+Course.enroll_student — 1
+
+Course.display_details — CC = 2 (loop over students)
+
+Lecturer.__init__ — 1
+
+Lecturer.assign_course — CC = 2 (one if)
+
+Lecturer.submit_grades — CC = 2 (loop)
+
+Lecturer.print_summary — CC = 2 (loop)
+
+Registrar.__init__ — 1
+
+Registrar.add_student — 1
+
+Registrar.add_course — 1
+
+Registrar.add_lecturer — 1
+
+Registrar.full_report — CC = 4 (three loops -> 3, base 1) ← Medium
+
+main() — CC = 1
+
+Problematic CCs: Student.calculate_performance (~10) is the clear outlier. Registrar.full_report also has medium complexity because it iterates and kicks off several responsibilities (displaying course details, lecturer summaries, computing student performance).
+
+Lines of Code (LOC) — representative
+
+Student class (all methods combined): ~35 LOC
+
+Course class: ~18 LOC
+
+Lecturer class: ~20 LOC
+
+Registrar class: ~18 LOC
+
+main() and glue code: ~25 LOC
+
+Long methods: Student.calculate_performance is the longest single method and does many things — a maintainability issue.
+
+Coupling Between Objects (CBO)
+
+CBO counts how many other classes a class depends on (uses directly by calling methods or accessing attributes):
+
+Student: references Course (via register_course accepts course) and uses no other classes directly — CBO ≈ 1–2 (low-to-moderate).
+
+Course: references Student (stores students) and Lecturer (lecturer property) — CBO ≈ 2.
+
+Lecturer: references Course and Student (in submit_grades) — CBO ≈ 2–3.
+
+Registrar: references Students, Courses, Lecturers and calls their methods in full_report — CBO ≈ 3 (moderate). However, interactions are bidirectional (Course holds Student, Student holds Course), which increases effective coupling across classes.
+
+Problem area: bidirectional updates (e.g., Course.enroll_student calls student.register_course(self)) create tight coupling and risk inconsistent state if one side fails.
+
+Depth of Inheritance Tree (DIT)
+
+Person is a base class (DIT = 0)
+
+Student and Lecturer inherit from Person (DIT = 1)
+
+Course, Registrar not inheriting (DIT = 0)
+
+DIT is small and sensible for this design.
+
+Lack of Cohesion of Methods (LCOM) — rough, qualitative
+
+Student: moderate cohesion problems: fields include courses, grades, attendance, and last_login. Methods operate on different subsets: register_course touches courses, calculate_performance touches grades and attendance. Those methods are related to the concept of a student but could be more cohesive if responsibility is split (GPA calculation vs attendance).
+
+Registrar: low cohesion in full_report: it prints course details, lecturer summaries and triggers student performance calculations — mixing reporting and orchestration.
+
+Problem area: Student.calculate_performance mixes grade translation, GPA calculation, attendance aggregation, business rules (thresholds and messages) — low cohesion inside that single method.
+
+Part B — Diagnosis (why metrics indicate problems)
+
+High CC (Student.calculate_performance ≈10)
+
+Methods with high cyclomatic complexity are harder to read, harder to test (many execution paths), and more bug-prone. calculate_performance mixes multiple responsibilities: grade-to-points mapping, GPA calculation, attendance aggregation, business rules evaluation, and printing messages. Each responsibility multiplies potential bug paths.
+
+Moderate CBO and Bidirectional Coupling
+
+Objects updating each other (Course.enroll_student calls student.register_course(self)) create tight coupling. This makes the system fragile: a change in one class often requires changes in another; it increases integration testing effort and decreases reusability.
+
+Low cohesion within methods
+
+calculate_performance and full_report perform several unrelated tasks. Low cohesion reduces maintainability and increases reason-about-ability overhead.
+
+Registrar doing orchestration + reporting
+
+full_report both orchestrates (calling other classes to compute state) and prints formatted reports. Mixing responsibilities reduces the ability to reuse components (e.g., if you want to produce JSON or CSV reports instead of print).
+
+Effects on reusability & testability
+
+High CC → more test cases are needed to cover all branches. Unit testing is harder and more brittle.
+
+High coupling → difficult to isolate units for tests; changes propagate.
+
+Low cohesion → functions do many things; mocking out behavior is harder and single-purpose reuse is diminished.
+
+Part C — Refactoring (code + explanation + before/after metrics)
+
+I refactored to:
+
+Break calculate_performance into smaller, testable methods: compute_gpa(), compute_attendance_rate(), and performance_summary() to separate concerns.
+
+Reduce coupling: eliminate Course.enroll_student calling Student.register_course. Instead the Registrar (or a dedicated EnrollmentService) performs enrollment and keeps the two sides consistent. (I implemented a Registrar.enroll method to coordinate).
+
+Improve cohesion and encapsulation: Student only exposes simple APIs to add grades/attendance; performance computation is delegated to Student but via focused helpers.
+
+Simplify Registrar.full_report by delegating printing to small helper methods and avoiding mixed responsibilities.
+
+Below is the refactored file you can copy to University_Course_Registration_System_refactored.py. After it I list before/after metrics for the main changed methods.
+
+Refactored Code (complete)
+# University_Course_Registration_System_refactored.py
+from datetime import datetime
+from typing import List, Dict, Optional, Tuple
+
+
+class Person:
+    def __init__(self, person_id: str, name: str, email: str, phone: Optional[str] = None):
+        self.person_id = person_id
+        self.name = name
+        self.email = email
+        self.phone = phone
+        self.role = None
+
+    def display_info(self) -> str:
+        return f"ID: {self.person_id}, Name: {self.name}, Email: {self.email}, Phone: {self.phone}"
+
+    def update_contact(self, email: str, phone: Optional[str]):
+        self.email = email
+        self.phone = phone
+
+
+class Student(Person):
+    GRADE_POINTS = {"A": 4.0, "B": 3.0, "C": 2.0, "D": 1.0, "E": 0.0}
+
+    def __init__(self, student_id: str, name: str, email: str, phone: Optional[str] = None):
+        super().__init__(student_id, name, email, phone)
+        self.role = "Student"
+        self.courses: List["Course"] = []
+        self.grades: Dict[str, str] = {}          # course_code -> letter
+        self.attendance: Dict[str, List[bool]] = {}  # course_code -> list of booleans
+        self.last_login = datetime.now()
+
+    # Minimal responsibilities: only mutate student state
+    def add_course(self, course: "Course"):
+        if course.code not in [c.code for c in self.courses]:
+            self.courses.append(course)
+
+    def add_grade(self, course_code: str, letter: str):
+        self.grades[course_code] = letter
+
+    def add_attendance(self, course_code: str, record: List[bool]):
+        self.attendance[course_code] = record
+
+    # Refactored: small focused methods that are easy to test
+    def compute_gpa(self) -> float:
+        if not self.grades:
+            return 0.0
+        total_points = 0.0
+        for letter in self.grades.values():
+            total_points += self.GRADE_POINTS.get(letter, 0.0)
+        gpa = total_points / len(self.grades)
+        return round(gpa, 2)
+
+    def compute_average_attendance(self) -> float:
+        if not self.attendance:
+            return 0.0
+        total_percentage = 0.0
+        course_count = 0
+        for records in self.attendance.values():
+            if not records:
+                continue
+            attended = sum(1 for r in records if r)
+            total_percentage += (attended / len(records)) * 100
+            course_count += 1
+        if course_count == 0:
+            return 0.0
+        return round(total_percentage / course_count, 1)
+
+    def performance_summary(self) -> Dict[str, float]:
+        gpa = self.compute_gpa()
+        attendance = self.compute_average_attendance()
+        return {"gpa": gpa, "attendance": attendance}
+
+    # Single-purpose method to print or return a small summary
+    def report(self) -> str:
+        perf = self.performance_summary()
+        gpa = perf["gpa"]
+        attendance = perf["attendance"]
+        status = "OK"
+        if gpa >= 3.5 and attendance >= 90:
+            status = "Excellent"
+        elif gpa < 2.0 or attendance < 60:
+            status = "Warning: Poor performance"
+        return f"{self.name}: GPA={gpa}, Attendance={attendance:.1f}%, Status={status}"
+
+
+class Course:
+    def __init__(self, code: str, title: str, credit_hours: int, lecturer: Optional["Lecturer"] = None):
+        self.code = code
+        self.title = title
+        self.credit_hours = credit_hours
+        self.lecturer = lecturer
+        self.students: List[Student] = []
+
+    # Course only manages its enrolled students list
+    def add_student(self, student: Student):
+        if student.person_id not in [s.person_id for s in self.students]:
+            self.students.append(student)
+
+    def display_summary(self) -> str:
+        lecturer_name = self.lecturer.name if self.lecturer else "TBA"
+        enrolled = ", ".join(s.name for s in self.students) or "None"
+        return f"{self.code}: {self.title} ({self.credit_hours} credits), Lecturer: {lecturer_name}, Students: {enrolled}"
+
+
+class Lecturer(Person):
+    def __init__(self, staff_id: str, name: str, email: str, department: str):
+        super().__init__(staff_id, name, email)
+        self.role = "Lecturer"
+        self.department = department
+        self.courses: List[Course] = []
+
+    def assign_course(self, course: Course):
+        if course.code not in [c.code for c in self.courses]:
+            self.courses.append(course)
+            course.lecturer = self
+
+    def submit_grades(self, course_code: str, student_grade_pairs: List[Tuple[Student, str]]):
+        # Accept list of (student, grade) tuples — caller supplies who to update
+        for student, grade in student_grade_pairs:
+            student.add_grade(course_code, grade)
+
+    def summary(self) -> str:
+        return f"{self.name} ({self.department}): Teaching {len(self.courses)} course(s)"
+
+
+class Registrar:
+    def __init__(self):
+        self.students: Dict[str, Student] = {}
+        self.courses: Dict[str, Course] = {}
+        self.lecturers: Dict[str, Lecturer] = {}
+
+    # Registration / CRUD APIs
+    def add_student(self, student: Student):
+        self.students[student.person_id] = student
+
+    def add_course(self, course: Course):
+        self.courses[course.code] = course
+
+    def add_lecturer(self, lecturer: Lecturer):
+        self.lecturers[lecturer.person_id] = lecturer
+
+    # Centralized enrollment to keep both sides consistent and decouple Course/Student
+    def enroll(self, student_id: str, course_code: str) -> bool:
+        student = self.students.get(student_id)
+        course = self.courses.get(course_code)
+        if not student or not course:
+            return False
+        # Update both sides; but the Registrar coordinates the operation
+        course.add_student(student)
+        student.add_course(course)
+        return True
+
+    # Centralized grading: Lecturer provides the grades list; Registrar coordinates storing
+    def assign_grades(self, course_code: str, grades_map: Dict[str, str]):
+        """
+        grades_map: student_id -> letter_grade
+        """
+        for student_id, letter in grades_map.items():
+            student = self.students.get(student_id)
+            if student:
+                student.add_grade(course_code, letter)
+
+    # Reporting responsibilities split into small helpers
+    def _report_courses(self) -> List[str]:
+        return [c.display_summary() for c in self.courses.values()]
+
+    def _report_lecturers(self) -> List[str]:
+        return [l.summary() for l in self.lecturers.values()]
+
+    def _report_students(self) -> List[str]:
+        return [s.report() for s in self.students.values()]
+
+    def full_report(self) -> str:
+        parts = []
+        parts.append("=== Courses ===")
+        parts.extend(self._report_courses())
+        parts.append("=== Lecturers ===")
+        parts.extend(self._report_lecturers())
+        parts.append("=== Students ===")
+        parts.extend(self._report_students())
+        return "\n".join(parts)
+
+
+def main_refactored():
+    reg = Registrar()
+
+    # create courses
+    c1 = Course("CS101", "Intro to Programming", 3)
+    c2 = Course("CS201", "Data Structures", 4)
+    reg.add_course(c1)
+    reg.add_course(c2)
+
+    # create lecturer
+    l1 = Lecturer("L001", "Dr. Smith", "smith@uni.com", "CS")
+    reg.add_lecturer(l1)
+    l1.assign_course(c1)
+
+    # create students
+    s1 = Student("S001", "Alice", "alice@uni.com")
+    s2 = Student("S002", "Bob", "bob@uni.com")
+    reg.add_student(s1)
+    reg.add_student(s2)
+
+    # enrollment done via Registrar.enroll to keep both sides consistent
+    reg.enroll("S001", "CS101")
+    reg.enroll("S002", "CS101")
+
+    # lecturer assigns grades via Registrar
+    reg.assign_grades("CS101", {"S001": "A", "S002": "B"})
+
+    # attendance
+    s1.add_attendance("CS101", [True, True, False, True])
+    s2.add_attendance("CS101", [True, False, True, False])
+
+    print(reg.full_report())
+
+
+if __name__ == "__main__":
+    main_refactored()
+
+Why these refactor choices improve things
+
+Reduced Cyclomatic Complexity
+
+Student.calculate_performance (original, CC ≈ 10) was split into:
+
+compute_gpa() — CC = 1–2 (simple loop + no branching)
+
+compute_average_attendance() — CC = 2–3
+
+performance_summary() — CC = 1
+
+report() — CC = 2 (simple conditions)
+
+Net effect: logic is spread into several small methods with small CC; each is trivial to unit test.
+
+Reduced Coupling
+
+Enrollment is coordinated by Registrar.enroll() — the Course and Student no longer call into each other. Course.add_student and Student.add_course are now single-purpose helpers — the Registrar owns the orchestration. This reduces ripple effects from changes in enrollment logic.
+
+Improved Cohesion & Encapsulation
+
+Each class has clearer, single-responsibility methods:
+
+Student handles state and focused performance helpers.
+
+Course only tracks students and its own summary.
+
+Lecturer provides assignment and grade submission helper.
+
+Registrar manages registration/enrollment and reporting orchestration.
+
+full_report no longer mixes orchestration and printing: it composes small lists and returns a string; presentation remains separated (the caller decides what to do — print or send as HTTP response, or write to a file).
+
+Easier Testing
+
+Each small method can be unit tested with small inputs (e.g., compute_gpa with a simple grades map).
+
+Registrar orchestrations are now small and testable (enroll, assign_grades, full_report).
+
+Before / After Metrics (focused)
+Student.calculate_performance
+
+Before: CC ≈ 10, LOC ≈ 18, LCOM (method does many unrelated things) = low cohesion
+
+After (split methods):
+
+compute_gpa() — CC 1–2, LOC ≈ 8
+
+compute_average_attendance() — CC 2, LOC ≈ 8
+
+performance_summary() — CC 1, LOC ≈ 3
+
+report() — CC 2, LOC ≈ 6
+
+Effect: total logic preserved, but each method is small. Unit testing becomes straightforward; path explosion is avoided.
+
+Registrar.full_report
+
+Before: CC = 4 (3 loops + base), did printing and orchestration, LOC ≈ 12
+
+After: full_report() delegates to _report_* helpers; CC ≈ 2 (control flow reduced), each helper is small and returns strings. Reporting is decoupled from printing which aids reuse.
+
+Coupling (CBO)
+
+Before: bidirectional coupling between Course and Student via enroll_student() ↔ register_course() — effective coupling higher than counts show.
+
+After: Registrar is the sole coordinator for enrollment; Course and Student have lower effective coupling.
+
