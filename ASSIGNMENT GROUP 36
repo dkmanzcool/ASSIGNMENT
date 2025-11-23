@@ -4,7 +4,7 @@ INTE/MG/1730/09/22 WAMBUA.M.NZONZO
 INTE/MG/1902/09/22 SALIM ANWAR
 INTE/MG/2920/09/22 JEFFREY OWEN 
 
-GITHUB LINK:
+GITHUB LINK:https://github.com/dkmanzcool/ASSIGNMENT.git
 
 
 
@@ -440,4 +440,5 @@ Coupling (CBO)
 Before: bidirectional coupling between Course and Student via enroll_student() ↔ register_course() — effective coupling higher than counts show.
 
 After: Registrar is the sole coordinator for enrollment; Course and Student have lower effective coupling.
+
 
